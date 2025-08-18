@@ -13,34 +13,34 @@ type Store struct {
 // To initialize a new Store
 func NewStore() *Store {
 	return &Store{
-		data : make(map[string][string])
+		data: make(map[string]string),
 	}
 }
 
 // Insert OR Update a value.
 func (s *Store) Set(key, value string) {
-	s.data[key]
+	s.data[key] = value
 }
 
 // Get the value for a key or return an error.
-func (s * Store) Get(key string) (string, error) {
-	value, ok = s.data[key]
+func (s *Store) Get(key string) (string, error) {
+	value, ok := s.data[key]
 
-	if okay {
+	if ok {
 		return value, nil
 	}
 
-	return "", errors.New("Key not found")
+	return "", errors.New("key not found")
 }
 
 // Delete a key from the store.
-func (s *Store) (key string) error {
-	value, ok = s.data[key]
+func (s *Store) Delete(key string) error {
+	_, ok := s.data[key]
 
 	if ok {
 		delete(s.data, key)
 		return nil
 	}
 
-	return errors.New("Key not found")
+	return errors.New("key not found")
 }
