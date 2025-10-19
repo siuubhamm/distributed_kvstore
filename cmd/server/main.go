@@ -1,74 +1,101 @@
 package main
 
 import (
-	"encoding/json"
+	"bufio"
 	"fmt"
+	"io"
 	"log"
-	"net/http"
+	"net"
+	"strings"
 
-	"github.com/siuubhamm/distributed_kvstore/store"
+	store "github.com/siuubhamm/distributed_kvstore/kvstore"
 )
 
-// Global variable for key-value store
-var s *store.PersistenceStore
-
-// setRequest defines the structure of the request body,
-// for the SET endpoint
-type setRequest struct {
-	Key   string `json:"key"`
-	Value string `json:"value"`
-}
-
-// getHandler handles GET requests to /get?key=someKey.
-// Example: curl "http://localhost:8080/get?key=Name"
-func getHandler(w http.ResponseWriter, r *http.Request) {
-	key := r.URL.Query().Get("key")
-
-	// Getting the value from the store
-	val, err := s.Get(key)
-	if err != nil {
-		http.Error(w, "key not found", http.StatusNotFound)
-		return
-	}
-
-	// Write the value back in the HTTP response body
-	fmt.Fprintln(w, val)
-}
-
-// setHandler handles POST requests to /set with a json body.
-// Example:
-//
-//	curl -X POST http://localhost:8080/set \
-//	     -H "Content-Type: application/json" \
-//	     -d '{"key":"Name","value":"Shubham"}'
-func setHandler(w http.ResponseWriter, r *http.Request) {
-	var req setRequest
-
-	err := json.NewDecoder(r.Body).Decode(&req)
-
-	if err != nil {
-		http.Error(w, "invalid request body", http.StatusBadRequest)
-		return
-	}
-
-	s.Set(req.Key, req.Value)
-
-	w.WriteHeader(http.StatusOK)
-	fmt.Fprintf(w, "key %s set successfully", req.Key)
-}
+const db = "persistence.json"
 
 func main() {
-	var err error
-	s, err = store.NewPersistenceStore("persistent.json")
+	ps, err := store.NewPersistenceStore(db)
 	if err != nil {
-		log.Fatalf("failed to load persistent store: %v", err)
+		log.Fatalf("Failed to create persistence store: %v", err)
 	}
 
-	// Register HTTP handlers for the endpoints
-	http.HandleFunc("/get", getHandler)
-	http.HandleFunc("/set", setHandler)
+	listener, err := net.Listen("tcp", "loalhost:8080")
+	if err != nil {
+		log.Fatalf("Failed to start kvstore server: %v", err)
+	}
 
-	// Starting the server
-	fmt.Println("Server listening on :8080")
-	log.Fatal(http.ListenAndServe(":8080", nil))
+	defer listener.Close()
+
+	log.Println("KV Store server listening on localhost:8080")
+
+	for {
+		conn, err := listener.Accept()
+		if err != nil {
+			log.Printf("Failed to accept connection: %v", err)
+			continue
+		}
+		go handleConnection(conn, ps)
+	}
+}
+
+func handleConnection(conn net.Conn, ps *kvstore.PersistenceStore) {
+
+	defer conn.Close()
+	log.Printf("Client Connected: %s", conn.RemoteAddr().String())
+
+	scanner := bufio.NewScanner(conn)
+	for scanner.Scan() {
+		line := scanner.Text()
+		parts := strings.Fields(line)
+
+		if len(parts) == 0 {
+			continue
+		}
+
+		command := strings.ToUpper(parts[0])
+		var response string
+
+		switch command {
+		case "SET":
+			if len(parts) < 3 {
+				response = "ERROR: SET command requires a key and a value \n"
+			} else {
+				key := parts[1]
+				value := strings.Join(parts[2:], " ")
+
+				err := ps.Set(key, value)
+				if err != nil {
+					response = fmt.Sprintf("ERROR : %v \n", err)
+				} else {
+					response = "OK \n"
+				}
+			}
+		case "GET":
+			if len(parts) != 2 {
+				response = "ERROR: GET command requires a key \n"
+			} else {
+				key := parts[1]
+				val, err := ps.Get(key)
+				if err != nil {
+					response = fmt.Sprintf("ERROR: %v \n", err)
+				} else {
+					response = fmt.Sprintf("%s \n", val)
+				}
+			}
+		default:
+			response = fmt.Sprintf("ERROR: Unknown command '%s' \n", command)
+		}
+
+		_, err := io.WriteString(conn, response)
+		if err != nil {
+			log.Printf("Failed to write response to client %s: %v", conn.RemoteAddr().String(), err)
+			return
+		}
+	}
+
+	err := scanner.Err()
+	if err != nil {
+		log.Printf("ERROR readign from client %s: %v", conn.RemoteAddr().String(), err)
+	}
+	log.Printf("Connection closed for client: %s", conn.RemoteAddr().String())
 }

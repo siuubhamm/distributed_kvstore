@@ -4,25 +4,20 @@ import (
 	"errors"
 )
 
-// In memory key value store.
-// The string: string type helps in adapting to any type of data.
 type Store struct {
 	data map[string]string
 }
 
-// To initialize a new Store
 func NewStore() *Store {
 	return &Store{
 		data: make(map[string]string),
 	}
 }
 
-// Insert OR Update a value.
 func (s *Store) Set(key, value string) {
 	s.data[key] = value
 }
 
-// Get the value for a key or return an error.
 func (s *Store) Get(key string) (string, error) {
 	value, ok := s.data[key]
 
@@ -33,14 +28,13 @@ func (s *Store) Get(key string) (string, error) {
 	return "", errors.New("key not found")
 }
 
-// Delete a key from the store.
-func (s *Store) Delete(key string) error {
-	_, ok := s.data[key]
+// func (s *Store) Delete(key string) error {
+// 	_, ok := s.data[key]
 
-	if ok {
-		delete(s.data, key)
-		return nil
-	}
+// 	if ok {
+// 		delete(s.data, key)
+// 		return nil
+// 	}
 
-	return errors.New("key not found")
-}
+// 	return errors.New("key not found")
+// }

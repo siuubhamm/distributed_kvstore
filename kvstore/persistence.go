@@ -7,16 +7,12 @@ import (
 	"sync"
 )
 
-// Persistence is key-value store which is
-// backed by a json file.
 type PersistenceStore struct {
 	data map[string]string
 	mu   sync.RWMutex
 	file string
 }
 
-// NewPersistanceStore creates a new PersistenceStore,
-// loading data if file exists.
 func NewPersistenceStore(filename string) (*PersistenceStore, error) {
 	ps := &PersistenceStore{
 		data: make(map[string]string),
@@ -38,7 +34,6 @@ func NewPersistenceStore(filename string) (*PersistenceStore, error) {
 	return ps, nil
 }
 
-// Set stores a key-value pair and saves it to file.
 func (ps *PersistenceStore) Set(key, value string) error {
 	ps.mu.Lock()
 	defer ps.mu.Unlock()
@@ -47,7 +42,6 @@ func (ps *PersistenceStore) Set(key, value string) error {
 	return ps.saveToFile()
 }
 
-// Get retrieves a value.
 func (ps *PersistenceStore) Get(key string) (string, error) {
 	ps.mu.RLock()
 	defer ps.mu.RUnlock()
@@ -59,7 +53,6 @@ func (ps *PersistenceStore) Get(key string) (string, error) {
 	return val, nil
 }
 
-// Delete removes a key and saves it to a file.
 func (ps *PersistenceStore) Delete(key string) error {
 	ps.mu.Lock()
 	defer ps.mu.Unlock()
@@ -73,7 +66,6 @@ func (ps *PersistenceStore) Delete(key string) error {
 	return ps.saveToFile()
 }
 
-// saveToFile writes the current map into the json file.
 func (ps *PersistenceStore) saveToFile() error {
 	bytes, err := json.MarshalIndent(ps.data, "", "  ")
 	if err != nil {
