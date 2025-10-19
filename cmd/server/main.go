@@ -8,13 +8,13 @@ import (
 	"net"
 	"strings"
 
-	store "github.com/siuubhamm/distributed_kvstore/kvstore"
+	kvstore "github.com/siuubhamm/distributed_kvstore/kvstore"
 )
 
 const db = "persistence.json"
 
 func main() {
-	ps, err := store.NewPersistenceStore(db)
+	ps, err := kvstore.NewPersistenceStore(db)
 	if err != nil {
 		log.Fatalf("Failed to create persistence store: %v", err)
 	}
