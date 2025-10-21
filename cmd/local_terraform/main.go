@@ -9,36 +9,54 @@ import (
 	"net"
 	"os"
 	"os/exec"
+	"runtime"
 	"strings"
 	"sync"
 	"time"
 )
 
 const (
-	serverAddress  = "localhost:8080"
-	numClients     = 5
-	serverPath     = "./cmd/server"
-	avgSleepMillis = 500 // The average sleep time for our exponential distribution
+	serverAddress   = "localhost:8080"
+	numClients      = 5
+	serverPath      = "./cmd/server"
+	avgSleepMillis  = 100 // Lowering sleep for higher throughput
+	minOpsPerClient = 50
+	maxOpsPerClient = 100
 )
 
 func main() {
-	log.Println("--- Automated KV Store Test ---")
+	log.Println("--- Automated High-Load KV Store Test ---")
+
+	serverExecutable := "server"
+	if runtime.GOOS == "windows" {
+		serverExecutable = "server.exe"
+	}
 
 	os.Remove("persistent.json")
+	os.Remove(serverExecutable)
 
-	log.Printf("Starting server from %s...", serverPath)
-	serverCmd := exec.Command("go", "run", serverPath)
+	log.Println("Building server executable...")
+	buildCmd := exec.Command("go", "build", "-o", serverExecutable, serverPath)
+	if output, err := buildCmd.CombinedOutput(); err != nil {
+		log.Fatalf("Failed to build server: %v\nOutput: %s", err, string(output))
+	}
+	log.Println("Server built successfully.")
+
+	log.Printf("Starting server from %s...", serverExecutable)
+	serverCmd := exec.Command("./" + serverExecutable)
 	err := serverCmd.Start()
 	if err != nil {
 		log.Fatalf("Failed to start server: %v", err)
 	}
 	log.Println("Server process started. Waiting for it to initialize...")
 
+	defer os.Remove(serverExecutable)
+
 	time.Sleep(2 * time.Second)
 
 	var wg sync.WaitGroup
 
-	log.Printf("Starting %d concurrent clients...", numClients)
+	log.Printf("Starting %d concurrent clients, each performing %d-%d operations...", numClients, minOpsPerClient, maxOpsPerClient)
 	for i := 0; i < numClients; i++ {
 		wg.Add(1)
 		go runClientTest(i, &wg)
@@ -66,41 +84,49 @@ func runClientTest(clientID int, wg *sync.WaitGroup) {
 	}
 	defer conn.Close()
 
-	key := fmt.Sprintf("key-%d", clientID)
-	value := fmt.Sprintf("value-for-client-%d", clientID)
+	numOps := rand.Intn(maxOpsPerClient-minOpsPerClient+1) + minOpsPerClient
+	successCount := 0
 
-	// Generate random flags and a short, random expiry time (0-9 seconds)
-	flags := rand.Uint32()
-	exptime := rand.Intn(10)
+	for i := 0; i < numOps; i++ {
+		// Each operation gets a unique key
+		key := fmt.Sprintf("key-%d-%d", clientID, i)
+		value := fmt.Sprintf("value-for-client-%d-op-%d", clientID, i)
+		flags := rand.Uint32()
+		// *** CHANGE: Set a long expiry time to ensure keys persist ***
+		exptime := 60
 
-	// 1. SET the value with the random parameters
-	setCmd := fmt.Sprintf("set %s %d %d %d\r\n%s\r\n", key, flags, exptime, len(value), value)
-	io.WriteString(conn, setCmd)
-	response, _ := bufio.NewReader(conn).ReadString('\n')
-	if strings.TrimSpace(response) != "STORED" {
-		log.Printf("[Client %d] FAILED: Did not get 'STORED' response for SET. Got: %s", clientID, response)
-		return
+		// 1. SET the value
+		setCmd := fmt.Sprintf("set %s %d %d %d\r\n%s\r\n", key, flags, exptime, len(value), value)
+		io.WriteString(conn, setCmd)
+		response, _ := bufio.NewReader(conn).ReadString('\n')
+		if strings.TrimSpace(response) != "STORED" {
+			log.Printf("[Client %d] FAILED on op %d: Did not get 'STORED'. Got: %s", clientID, i, response)
+			break // Stop this client on failure
+		}
+
+		sleepDuration := time.Duration(rand.ExpFloat64()*avgSleepMillis) * time.Millisecond
+		time.Sleep(sleepDuration)
+
+		// 2. GET the value back
+		getCmd := fmt.Sprintf("get %s\r\n", key)
+		io.WriteString(conn, getCmd)
+
+		reader := bufio.NewReader(conn)
+		valueLine, _ := reader.ReadString('\n')
+		dataLine, _ := reader.ReadString('\n')
+		endLine, _ := reader.ReadString('\n')
+
+		expectedValueLine := fmt.Sprintf("VALUE %s %d %d", key, flags, len(value))
+		if !strings.HasPrefix(valueLine, expectedValueLine) || strings.TrimSpace(dataLine) != value || strings.TrimSpace(endLine) != "END" {
+			log.Printf("[Client %d] FAILED on op %d: GET response was not correct.", clientID, i)
+			break // Stop this client on failure
+		}
+		successCount++
 	}
 
-	// Introduce a variable sleep time between requests.
-	sleepDuration := time.Duration(rand.ExpFloat64()*avgSleepMillis) * time.Millisecond
-	time.Sleep(sleepDuration)
-
-	// 2. GET the value back
-	getCmd := fmt.Sprintf("get %s\r\n", key)
-	io.WriteString(conn, getCmd)
-
-	reader := bufio.NewReader(conn)
-	valueLine, _ := reader.ReadString('\n')
-	dataLine, _ := reader.ReadString('\n')
-	endLine, _ := reader.ReadString('\n')
-
-	// The expected response must now match the random flags we sent.
-	expectedValueLine := fmt.Sprintf("VALUE %s %d %d", key, flags, len(value))
-	if !strings.HasPrefix(valueLine, expectedValueLine) || strings.TrimSpace(dataLine) != value || strings.TrimSpace(endLine) != "END" {
-		log.Printf("[Client %d] FAILED: GET response was not correct. Sent (Flags: %d, Expiry: %d).", clientID, flags, exptime)
-		return
+	if successCount == numOps {
+		log.Printf("[Client %d] SUCCESS: Completed all %d Set/Get operations.", clientID, numOps)
+	} else {
+		log.Printf("[Client %d] FAILED: Completed only %d of %d operations.", clientID, successCount, numOps)
 	}
-
-	log.Printf("[Client %d] SUCCESS: Set/Get verified for key '%s' (Flags: %d, Expiry: %ds, Sleep: %v)", clientID, key, flags, exptime, sleepDuration)
 }
