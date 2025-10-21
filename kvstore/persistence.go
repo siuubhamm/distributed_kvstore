@@ -5,17 +5,24 @@ import (
 	"errors"
 	"os"
 	"sync"
+	"time"
 )
 
+type Item struct {
+	Value   string `json:"value"`
+	Flags   uint32 `json:"flags"`
+	Expires int64  `json:"expires"`
+}
+
 type PersistenceStore struct {
-	data map[string]string
+	data map[string]Item
 	mu   sync.RWMutex
 	file string
 }
 
 func NewPersistenceStore(filename string) (*PersistenceStore, error) {
 	ps := &PersistenceStore{
-		data: make(map[string]string),
+		data: make(map[string]Item),
 		file: filename,
 	}
 
@@ -34,23 +41,37 @@ func NewPersistenceStore(filename string) (*PersistenceStore, error) {
 	return ps, nil
 }
 
-func (ps *PersistenceStore) Set(key, value string) error {
+func (ps *PersistenceStore) Set(key string, value string, flags uint32, exptime int64) error {
 	ps.mu.Lock()
 	defer ps.mu.Unlock()
 
-	ps.data[key] = value
+	var expires int64
+	if exptime > 0 {
+		expires = time.Now().Unix() + exptime
+	}
+
+	ps.data[key] = Item{
+		Value:   value,
+		Flags:   flags,
+		Expires: expires,
+	}
 	return ps.saveToFile()
 }
 
-func (ps *PersistenceStore) Get(key string) (string, error) {
+func (ps *PersistenceStore) Get(key string) (Item, error) {
 	ps.mu.RLock()
 	defer ps.mu.RUnlock()
 
-	val, ok := ps.data[key]
+	item, ok := ps.data[key]
 	if !ok {
-		return "", errors.New("key not found")
+		return Item{}, errors.New("key not found")
 	}
-	return val, nil
+
+	if item.Expires != 0 && time.Now().Unix() > item.Expires {
+		return Item{}, errors.New("key not found (expired)")
+	}
+
+	return item, nil
 }
 
 func (ps *PersistenceStore) Delete(key string) error {

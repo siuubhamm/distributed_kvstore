@@ -6,96 +6,110 @@ import (
 	"io"
 	"log"
 	"net"
+	"os"
 	"strings"
-
-	kvstore "github.com/siuubhamm/distributed_kvstore/kvstore"
 )
 
-const db = "persistence.json"
+const (
+	defaultFlags   = "0"
+	defaultExptime = "0"
+)
 
 func main() {
-	ps, err := kvstore.NewPersistenceStore(db)
+	conn, err := net.Dial("tcp", "localhost:8080")
 	if err != nil {
-		log.Fatalf("Failed to create persistence store: %v", err)
+		log.Fatalf("Failed to connect to server: %v", err)
 	}
+	defer conn.Close()
 
-	listener, err := net.Listen("tcp", "loalhost:8080")
-	if err != nil {
-		log.Fatalf("Failed to start kvstore server: %v", err)
-	}
-
-	defer listener.Close()
-
-	log.Println("KV Store server listening on localhost:8080")
+	fmt.Println("Connected to KV store server. Type 'quit' to exit.")
+	scanner := bufio.NewScanner(os.Stdin)
+	serverReader := bufio.NewReader(conn)
 
 	for {
-		conn, err := listener.Accept()
-		if err != nil {
-			log.Printf("Failed to accept connection: %v", err)
-			continue
+		fmt.Print("> ")
+		if !scanner.Scan() {
+			break
 		}
-		go handleConnection(conn, ps)
-	}
-}
-
-func handleConnection(conn net.Conn, ps *kvstore.PersistenceStore) {
-
-	defer conn.Close()
-	log.Printf("Client Connected: %s", conn.RemoteAddr().String())
-
-	scanner := bufio.NewScanner(conn)
-	for scanner.Scan() {
-		line := scanner.Text()
-		parts := strings.Fields(line)
-
+		input := scanner.Text()
+		parts := strings.Fields(input)
 		if len(parts) == 0 {
 			continue
 		}
 
-		command := strings.ToUpper(parts[0])
-		var response string
-
-		switch command {
-		case "SET":
-			if len(parts) < 3 {
-				response = "ERROR: SET command requires a key and a value \n"
-			} else {
-				key := parts[1]
-				value := strings.Join(parts[2:], " ")
-
-				err := ps.Set(key, value)
-				if err != nil {
-					response = fmt.Sprintf("ERROR : %v \n", err)
-				} else {
-					response = "OK \n"
-				}
-			}
-		case "GET":
-			if len(parts) != 2 {
-				response = "ERROR: GET command requires a key \n"
-			} else {
-				key := parts[1]
-				val, err := ps.Get(key)
-				if err != nil {
-					response = fmt.Sprintf("ERROR: %v \n", err)
-				} else {
-					response = fmt.Sprintf("%s \n", val)
-				}
-			}
-		default:
-			response = fmt.Sprintf("ERROR: Unknown command '%s' \n", command)
+		command := strings.ToLower(parts[0])
+		if command == "quit" {
+			sendCommand(conn, "quit\r\n")
+			break
 		}
 
-		_, err := io.WriteString(conn, response)
+		err := handleCommand(command, parts, conn, serverReader)
 		if err != nil {
-			log.Printf("Failed to write response to client %s: %v", conn.RemoteAddr().String(), err)
-			return
+			fmt.Printf("Error: %v\n", err)
 		}
 	}
 
-	err := scanner.Err()
-	if err != nil {
-		log.Printf("ERROR readign from client %s: %v", conn.RemoteAddr().String(), err)
+	if err := scanner.Err(); err != nil {
+		log.Printf("Error reading from stdin: %v", err)
 	}
-	log.Printf("Connection closed for client: %s", conn.RemoteAddr().String())
+}
+
+func handleCommand(command string, parts []string, conn net.Conn, serverReader *bufio.Reader) error {
+	var request string
+
+	switch command {
+	case "set":
+		if len(parts) < 3 {
+			return fmt.Errorf("usage: set <key> <value>")
+		}
+		key := parts[1]
+		value := strings.Join(parts[2:], " ")
+		bytes := len(value)
+		request = fmt.Sprintf("set %s %s %s %d\r\n%s\r\n", key, defaultFlags, defaultExptime, bytes, value)
+	case "get":
+		if len(parts) != 2 {
+			return fmt.Errorf("usage: get <key>")
+		}
+		key := parts[1]
+		request = fmt.Sprintf("get %s\r\n", key)
+	case "delete":
+		if len(parts) != 2 {
+			return fmt.Errorf("usage: delete <key>")
+		}
+		key := parts[1]
+		request = fmt.Sprintf("delete %s\r\n", key)
+	default:
+		return fmt.Errorf("unknown command: %s", command)
+	}
+
+	if err := sendCommand(conn, request); err != nil {
+		return fmt.Errorf("failed to send command to server: %w", err)
+	}
+
+	return readResponse(serverReader)
+}
+
+func sendCommand(conn net.Conn, cmd string) error {
+	_, err := conn.Write([]byte(cmd))
+	return err
+}
+
+func readResponse(reader *bufio.Reader) error {
+	for {
+		line, err := reader.ReadString('\n')
+		if err != nil {
+			if err == io.EOF {
+				return fmt.Errorf("connection closed by server")
+			}
+			return err
+		}
+
+		fmt.Print(line)
+
+		trimmedLine := strings.TrimSpace(line)
+		if trimmedLine == "END" || trimmedLine == "STORED" || trimmedLine == "NOT_STORED" || trimmedLine == "DELETED" || trimmedLine == "NOT_FOUND" || strings.HasPrefix(trimmedLine, "CLIENT_ERROR") || strings.HasPrefix(trimmedLine, "ERROR") {
+			break
+		}
+	}
+	return nil
 }
