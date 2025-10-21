@@ -6,110 +6,133 @@ import (
 	"io"
 	"log"
 	"net"
-	"os"
+	"strconv"
 	"strings"
+
+	kvstore "github.com/siuubhamm/distributed_kvstore/kvstore"
 )
 
-const (
-	defaultFlags   = "0"
-	defaultExptime = "0"
-)
+const dbFile = "persistent.json"
 
 func main() {
-	conn, err := net.Dial("tcp", "localhost:8080")
+	ps, err := kvstore.NewPersistenceStore(dbFile)
 	if err != nil {
-		log.Fatalf("Failed to connect to server: %v", err)
+		log.Fatalf("Failed to create persistence store: %v", err)
 	}
-	defer conn.Close()
 
-	fmt.Println("Connected to KV store server. Type 'quit' to exit.")
-	scanner := bufio.NewScanner(os.Stdin)
-	serverReader := bufio.NewReader(conn)
+	listener, err := net.Listen("tcp", "localhost:8080")
+	if err != nil {
+		log.Fatalf("Failed to start kvstore server: %v", err)
+	}
+	defer listener.Close()
+
+	log.Println("KV Store server started on localhost:8080")
 
 	for {
-		fmt.Print("> ")
-		if !scanner.Scan() {
+		conn, err := listener.Accept()
+		if err != nil {
+			log.Printf("Failed to accept connection: %v", err)
+			continue
+		}
+		go handleConnection(conn, ps)
+	}
+}
+
+func handleConnection(conn net.Conn, ps *kvstore.PersistenceStore) {
+	defer conn.Close()
+	reader := bufio.NewReader(conn)
+	log.Printf("Client connected: %s", conn.RemoteAddr().String())
+
+	for {
+		line, err := reader.ReadString('\n')
+		if err != nil {
+			if err != io.EOF {
+				log.Printf("Error reading from client %s: %v", conn.RemoteAddr().String(), err)
+			}
 			break
 		}
-		input := scanner.Text()
-		parts := strings.Fields(input)
+
+		parts := strings.Fields(line)
 		if len(parts) == 0 {
 			continue
 		}
 
 		command := strings.ToLower(parts[0])
-		if command == "quit" {
-			sendCommand(conn, "quit\r\n")
-			break
-		}
 
-		err := handleCommand(command, parts, conn, serverReader)
-		if err != nil {
-			fmt.Printf("Error: %v\n", err)
+		switch command {
+		case "set":
+			handleSet(parts, reader, conn, ps)
+		case "get":
+			handleGet(parts, conn, ps)
+		case "delete":
+			handleDelete(parts, conn, ps)
+		case "quit":
+			return
+		default:
+			io.WriteString(conn, "ERROR\r\n")
 		}
 	}
+	log.Printf("Connection closed for client: %s", conn.RemoteAddr().String())
+}
 
-	if err := scanner.Err(); err != nil {
-		log.Printf("Error reading from stdin: %v", err)
+func handleSet(parts []string, reader *bufio.Reader, conn net.Conn, ps *kvstore.PersistenceStore) {
+	if len(parts) != 5 {
+		io.WriteString(conn, "CLIENT_ERROR bad command line format\r\n")
+		return
+	}
+
+	key := parts[1]
+	flags, errFlags := strconv.ParseUint(parts[2], 10, 32)
+	exptime, errExptime := strconv.ParseInt(parts[3], 10, 64)
+	byteCount, errBytes := strconv.Atoi(parts[4])
+
+	if errFlags != nil || errExptime != nil || errBytes != nil {
+		io.WriteString(conn, "CLIENT_ERROR bad command line format\r\n")
+		return
+	}
+
+	value := make([]byte, byteCount+2) // +2 for \r\n
+	_, err := io.ReadFull(reader, value)
+	if err != nil {
+		log.Printf("Failed to read value data: %v", err)
+		return
+	}
+
+	valueStr := strings.TrimSpace(string(value))
+
+	if err := ps.Set(key, valueStr, uint32(flags), exptime); err != nil {
+		io.WriteString(conn, "NOT_STORED\r\n")
+		log.Printf("Failed to set key %s: %v", key, err)
+	} else {
+		io.WriteString(conn, "STORED\r\n")
 	}
 }
 
-func handleCommand(command string, parts []string, conn net.Conn, serverReader *bufio.Reader) error {
-	var request string
-
-	switch command {
-	case "set":
-		if len(parts) < 3 {
-			return fmt.Errorf("usage: set <key> <value>")
-		}
-		key := parts[1]
-		value := strings.Join(parts[2:], " ")
-		bytes := len(value)
-		request = fmt.Sprintf("set %s %s %s %d\r\n%s\r\n", key, defaultFlags, defaultExptime, bytes, value)
-	case "get":
-		if len(parts) != 2 {
-			return fmt.Errorf("usage: get <key>")
-		}
-		key := parts[1]
-		request = fmt.Sprintf("get %s\r\n", key)
-	case "delete":
-		if len(parts) != 2 {
-			return fmt.Errorf("usage: delete <key>")
-		}
-		key := parts[1]
-		request = fmt.Sprintf("delete %s\r\n", key)
-	default:
-		return fmt.Errorf("unknown command: %s", command)
+func handleGet(parts []string, conn net.Conn, ps *kvstore.PersistenceStore) {
+	if len(parts) < 2 {
+		io.WriteString(conn, "CLIENT_ERROR bad command line format\r\n")
+		return
 	}
 
-	if err := sendCommand(conn, request); err != nil {
-		return fmt.Errorf("failed to send command to server: %w", err)
+	for _, key := range parts[1:] {
+		item, err := ps.Get(key)
+		if err == nil {
+			response := fmt.Sprintf("VALUE %s %d %d\r\n%s\r\n", key, item.Flags, len(item.Value), item.Value)
+			io.WriteString(conn, response)
+		}
 	}
-
-	return readResponse(serverReader)
+	io.WriteString(conn, "END\r\n")
 }
 
-func sendCommand(conn net.Conn, cmd string) error {
-	_, err := conn.Write([]byte(cmd))
-	return err
-}
-
-func readResponse(reader *bufio.Reader) error {
-	for {
-		line, err := reader.ReadString('\n')
-		if err != nil {
-			if err == io.EOF {
-				return fmt.Errorf("connection closed by server")
-			}
-			return err
-		}
-
-		fmt.Print(line)
-
-		trimmedLine := strings.TrimSpace(line)
-		if trimmedLine == "END" || trimmedLine == "STORED" || trimmedLine == "NOT_STORED" || trimmedLine == "DELETED" || trimmedLine == "NOT_FOUND" || strings.HasPrefix(trimmedLine, "CLIENT_ERROR") || strings.HasPrefix(trimmedLine, "ERROR") {
-			break
-		}
+func handleDelete(parts []string, conn net.Conn, ps *kvstore.PersistenceStore) {
+	if len(parts) != 2 {
+		io.WriteString(conn, "CLIENT_ERROR bad command line format\r\n")
+		return
 	}
-	return nil
+	key := parts[1]
+	if err := ps.Delete(key); err != nil {
+		io.WriteString(conn, "NOT_FOUND\r\n")
+	} else {
+		io.WriteString(conn, "DELETED\r\n")
+	}
 }
