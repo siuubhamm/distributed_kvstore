@@ -7,6 +7,7 @@ import (
 	"log"
 	"net"
 	"os"
+	"strconv"
 	"strings"
 )
 
@@ -36,15 +37,23 @@ func main() {
 		command := strings.ToLower(parts[0])
 		switch command {
 		case "set":
-			if len(parts) < 3 {
-				fmt.Println("ERROR: SET requires a key and a value.")
+			if len(parts) < 5 {
+				fmt.Println("ERROR: SET requires a key, flags, expiry (in seconds), and a value.")
 				fmt.Print("> ")
 				continue
 			}
 			key := parts[1]
-			value := strings.Join(parts[2:], " ")
-			// Format as: set <key> <flags> <exptime> <bytes>\r\n<data>\r\n
-			memcacheCommand := fmt.Sprintf("set %s 0 0 %d\r\n%s\r\n", key, len(value), value)
+			flags, errFlags := strconv.Atoi(parts[2])
+			exptime, errExptime := strconv.Atoi(parts[3])
+
+			if errFlags != nil || errExptime != nil {
+				fmt.Println("ERROR: Invalid flags or expiry time. Must be numbers.")
+				fmt.Print("> ")
+				continue
+			}
+
+			value := strings.Join(parts[4:], " ")
+			memcacheCommand := fmt.Sprintf("set %s %d %d %d\r\n%s\r\n", key, flags, exptime, len(value), value)
 			io.WriteString(conn, memcacheCommand)
 		case "get", "delete":
 			if len(parts) != 2 {
