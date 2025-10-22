@@ -20,13 +20,14 @@ func main() {
 		log.Fatalf("Failed to create persistence store: %v", err)
 	}
 
-	listener, err := net.Listen("tcp", "localhost:8080")
+	// CHANGED: Listen on all interfaces (":8080") instead of just localhost
+	listener, err := net.Listen("tcp", ":8080")
 	if err != nil {
 		log.Fatalf("Failed to start kvstore server: %v", err)
 	}
 	defer listener.Close()
 
-	log.Println("KV Store server started on localhost:8080")
+	log.Println("KV Store server started on :8080")
 
 	for {
 		conn, err := listener.Accept()
