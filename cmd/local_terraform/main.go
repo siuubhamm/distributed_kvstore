@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"flag" // <-- IMPORTANT: Imports the flag package
 	"fmt"
 	"io"
 	"log"
@@ -15,8 +16,10 @@ import (
 	"time"
 )
 
+// Make serverAddress a variable (not a const) so the flag can change it
+var serverAddress = "localhost:8080"
+
 const (
-	serverAddress   = "localhost:8080"
 	numClients      = 5
 	serverPath      = "./cmd/server"
 	avgSleepMillis  = 100 // Lowering sleep for higher throughput
@@ -25,7 +28,11 @@ const (
 )
 
 func main() {
-	log.Println("--- Automated High-Load KV Store Test ---")
+	// Define and parse the -server flag from the command line
+	flag.StringVar(&serverAddress, "server", "localhost:8080", "Address of the memcached-lite server")
+	flag.Parse()
+
+	log.Printf("--- Automated High-Load KV Store Test (Target: %s) ---", serverAddress)
 
 	serverExecutable := "server"
 	if runtime.GOOS == "windows" {
@@ -35,24 +42,31 @@ func main() {
 	os.Remove("persistent.json")
 	os.Remove(serverExecutable)
 
-	log.Println("Building server executable...")
-	buildCmd := exec.Command("go", "build", "-o", serverExecutable, serverPath)
-	if output, err := buildCmd.CombinedOutput(); err != nil {
-		log.Fatalf("Failed to build server: %v\nOutput: %s", err, string(output))
+	var serverCmd *exec.Cmd
+	// --- THIS IS THE NEW LOGIC ---
+	// If the server address is the default, build and run it locally.
+	// If it's a remote address, skip all this.
+	if serverAddress == "localhost:8080" {
+		log.Println("Building local server executable...")
+		buildCmd := exec.Command("go", "build", "-o", serverExecutable, serverPath)
+		if output, err := buildCmd.CombinedOutput(); err != nil {
+			log.Fatalf("Failed to build server: %v\nOutput: %s", err, string(output))
+		}
+		log.Println("Server built successfully.")
+
+		log.Printf("Starting server from %s...", serverExecutable)
+		serverCmd = exec.Command("./" + serverExecutable)
+		err := serverCmd.Start()
+		if err != nil {
+			log.Fatalf("Failed to start server: %v", err)
+		}
+		log.Println("Server process started. Waiting for it to initialize...")
+		defer os.Remove(serverExecutable)
+		time.Sleep(2 * time.Second)
+	} else {
+		log.Printf("Targeting remote server at %s. Skipping local build.", serverAddress)
 	}
-	log.Println("Server built successfully.")
-
-	log.Printf("Starting server from %s...", serverExecutable)
-	serverCmd := exec.Command("./" + serverExecutable)
-	err := serverCmd.Start()
-	if err != nil {
-		log.Fatalf("Failed to start server: %v", err)
-	}
-	log.Println("Server process started. Waiting for it to initialize...")
-
-	defer os.Remove(serverExecutable)
-
-	time.Sleep(2 * time.Second)
+	// --- END NEW LOGIC ---
 
 	var wg sync.WaitGroup
 
@@ -65,11 +79,16 @@ func main() {
 	wg.Wait()
 	log.Println("All clients have finished.")
 
-	log.Println("Shutting down server...")
-	if err := serverCmd.Process.Kill(); err != nil {
-		log.Fatalf("Failed to kill server process: %v", err)
+	// --- NEW LOGIC ---
+	// Only shut down the server if we are the ones who started it.
+	if serverCmd != nil {
+		log.Println("Shutting down local server...")
+		if err := serverCmd.Process.Kill(); err != nil {
+			log.Fatalf("Failed to kill server process: %v", err)
+		}
+		log.Println("Server shut down.")
 	}
-	log.Println("Server shut down.")
+	// --- END NEW LOGIC ---
 
 	log.Println("--- Test Complete ---")
 }
@@ -77,6 +96,7 @@ func main() {
 func runClientTest(clientID int, wg *sync.WaitGroup) {
 	defer wg.Done()
 
+	// Connect to the serverAddress variable (which is set by the flag)
 	conn, err := net.Dial("tcp", serverAddress)
 	if err != nil {
 		log.Printf("[Client %d] FAILED to connect: %v", clientID, err)
@@ -92,8 +112,7 @@ func runClientTest(clientID int, wg *sync.WaitGroup) {
 		key := fmt.Sprintf("key-%d-%d", clientID, i)
 		value := fmt.Sprintf("value-for-client-%d-op-%d", clientID, i)
 		flags := rand.Uint32()
-		// *** CHANGE: Set a long expiry time to ensure keys persist ***
-		exptime := 60
+		exptime := 60 // Set a long expiry time
 
 		// 1. SET the value
 		setCmd := fmt.Sprintf("set %s %d %d %d\r\n%s\r\n", key, flags, exptime, len(value), value)
