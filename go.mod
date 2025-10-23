@@ -1,3 +1,3 @@
 module github.com/siuubhamm/distributed_kvstore
 
-go 1.19
+go 1.25
