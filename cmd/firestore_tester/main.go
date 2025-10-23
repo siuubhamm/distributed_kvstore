@@ -33,8 +33,7 @@ func main() {
 	}
 	defer client.Close()
 
-	projectID = client.Project()
-	log.Printf("Successfully connected to Firestore, project: %s", projectID)
+	log.Printf("Successfully connected to Firestore.")
 
 	var wg sync.WaitGroup
 	startTime := time.Now()
