@@ -24,8 +24,8 @@ const (
 	numClients      = 5
 	serverPath      = "./cmd/server"
 	avgSleepMillis  = 100
-	minOpsPerClient = 50
-	maxOpsPerClient = 100
+	minOpsPerClient = 500
+	maxOpsPerClient = 1000
 )
 
 type LatencyRecord struct {
