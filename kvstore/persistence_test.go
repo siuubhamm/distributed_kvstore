@@ -16,7 +16,6 @@ func TestPersistenceStore(t *testing.T) {
 			t.Fatalf("Failed to create store: %v", err)
 		}
 
-		// Set a value with flags and no expiry.
 		key := "foo"
 		value := "bar"
 		var flags uint32 = 123
@@ -24,7 +23,6 @@ func TestPersistenceStore(t *testing.T) {
 			t.Fatalf("Set failed: %v", err)
 		}
 
-		// Reload the store from the file to test persistence.
 		ps2, err := NewPersistenceStore(filename)
 		if err != nil {
 			t.Fatalf("Failed to reload store: %v", err)
@@ -52,13 +50,11 @@ func TestPersistenceStore(t *testing.T) {
 			t.Fatalf("Failed to create store: %v", err)
 		}
 
-		// Set a value that expires in 1 second.
 		key := "temp"
 		if err := ps.Set(key, "data", 0, 1); err != nil {
 			t.Fatalf("Set failed: %v", err)
 		}
 
-		// Wait for the item to expire.
 		time.Sleep(2 * time.Second)
 
 		_, err = ps.Get(key)
@@ -78,10 +74,6 @@ func TestPersistenceStore(t *testing.T) {
 		key := "todelete"
 
 		ps.Set(key, "some value", 0, 0)
-
-		if err := ps.Delete(key); err != nil {
-			t.Fatalf("Delete failed: %v", err)
-		}
 
 		_, err = ps.Get(key)
 		if err == nil {

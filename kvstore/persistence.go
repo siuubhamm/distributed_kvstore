@@ -74,19 +74,6 @@ func (ps *PersistenceStore) Get(key string) (Item, error) {
 	return item, nil
 }
 
-func (ps *PersistenceStore) Delete(key string) error {
-	ps.mu.Lock()
-	defer ps.mu.Unlock()
-
-	_, ok := ps.data[key]
-	if !ok {
-		return errors.New("key not found")
-	}
-
-	delete(ps.data, key)
-	return ps.saveToFile()
-}
-
 func (ps *PersistenceStore) saveToFile() error {
 	bytes, err := json.MarshalIndent(ps.data, "", "  ")
 	if err != nil {

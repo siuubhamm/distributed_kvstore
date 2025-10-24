@@ -17,88 +17,88 @@ import (
 	"time"
 )
 
-var serverAddress = "localhost:8080"
-var resultsDir = "./latency_results"
+var server_address = "localhost:8080"
+var result_dir = "./latency_results"
 
 const (
-	numClients      = 5
-	serverPath      = "./cmd/server"
-	avgSleepMillis  = 100
-	minOpsPerClient = 500
-	maxOpsPerClient = 1000
+	num_clients      = 5
+	server_path      = "./cmd/server"
+	average_sleep_ms = 100
+	min_ops          = 500
+	max_ops          = 1000
 )
 
 type LatencyRecord struct {
-	ClientID  int
-	Operation string
-	LatencyMs int64
+	Client_id  int
+	Operation  string
+	Latency_ms int64
 }
 
 func main() {
-	flag.StringVar(&serverAddress, "server", "localhost:8080", "Address of the memcached-lite server")
-	flag.StringVar(&resultsDir, "results", "./latency_results", "Directory to save latency CSV files") // <-- Add flag for results dir
+	flag.StringVar(&server_address, "server", "localhost:8080", "Address of the memcached-lite server")
+	flag.StringVar(&result_dir, "results", "./latency_results", "Directory to save latency CSV files")
 	flag.Parse()
 
-	log.Printf("--- Automated High-Load KV Store Test (Target: %s) ---", serverAddress)
+	log.Printf("--- Automated High-Load KV Store Test (Target: %s) ---", server_address)
 
-	if err := os.MkdirAll(resultsDir, 0755); err != nil {
-		log.Fatalf("Failed to create results directory %s: %v", resultsDir, err)
+	if err := os.MkdirAll(result_dir, 0755); err != nil {
+		log.Fatalf("Failed to create results directory %s: %v", result_dir, err)
 	}
 
-	serverExecutable := "server"
+	server_executable := "server"
 	if runtime.GOOS == "windows" {
-		serverExecutable = "server.exe"
+		server_executable = "server.exe"
 	}
 
 	os.Remove("persistent.json")
-	os.Remove(serverExecutable)
+	os.Remove(server_executable)
 
-	var serverCmd *exec.Cmd
-	if serverAddress == "localhost:8080" {
+	var server_cmd *exec.Cmd
+	if server_address == "localhost:8080" {
 		log.Println("Building local server executable...")
-		buildCmd := exec.Command("go", "build", "-o", serverExecutable, serverPath)
-		if output, err := buildCmd.CombinedOutput(); err != nil {
+		build_cmd := exec.Command("go", "build", "-o", server_executable, server_path)
+		if output, err := build_cmd.CombinedOutput(); err != nil {
 			log.Fatalf("Failed to build server: %v\nOutput: %s", err, string(output))
 		}
 		log.Println("Server built successfully.")
 
-		log.Printf("Starting server from %s...", serverExecutable)
-		serverCmd = exec.Command("./" + serverExecutable)
-		err := serverCmd.Start()
+		log.Printf("Starting server from %s...", server_executable)
+		server_cmd = exec.Command("./" + server_executable)
+		err := server_cmd.Start()
 		if err != nil {
 			log.Fatalf("Failed to start server: %v", err)
 		}
 		log.Println("Server process started. Waiting for it to initialize...")
-		defer os.Remove(serverExecutable)
+		defer os.Remove(server_executable)
 		time.Sleep(2 * time.Second)
 	} else {
-		log.Printf("Targeting remote server at %s. Skipping local build.", serverAddress)
+		log.Printf("Targeting remote server at %s. Skipping local build.", server_address)
 	}
 
 	var wg sync.WaitGroup
-	latencyChan := make(chan LatencyRecord, numClients*(maxOpsPerClient*2))
+	latency_chan := make(chan LatencyRecord, num_clients*(max_ops*2))
 
-	log.Printf("Starting %d concurrent clients, each performing %d-%d operations...", numClients, minOpsPerClient, maxOpsPerClient)
-	for i := 0; i < numClients; i++ {
+	log.Printf("Starting %d concurrent clients, each performing %d-%d operations...", num_clients, min_ops, max_ops)
+	for i := 0; i < num_clients; i++ {
 		wg.Add(1)
-		go runClientTest(i, &wg, latencyChan)
+		go run_client_tests(i, &wg, latency_chan)
 	}
 
 	wg.Wait()
-	close(latencyChan)
+	close(latency_chan)
 	log.Println("All clients have finished.")
 
 	log.Println("Processing collected latencies...")
-	allLatencies := []LatencyRecord{}
-	for rec := range latencyChan {
-		allLatencies = append(allLatencies, rec)
+	all_latencies := []LatencyRecord{}
+	for rec := range latency_chan {
+		all_latencies = append(all_latencies, rec)
 	}
-	saveLatenciesToCSV(allLatencies, fmt.Sprintf("%s/kvstore_latencies.csv", resultsDir))
-	log.Printf("Saved %d latency records to %s/kvstore_latencies.csv", len(allLatencies), resultsDir)
+	save_latency_to_csv(all_latencies, fmt.Sprintf("%s/kvstore_latencies.csv", result_dir))
+	log.Printf("Saved %d latency records to %s/kvstore_latencies.csv", len(all_latencies), result_dir)
 
-	if serverCmd != nil {
+	if server_cmd != nil {
 		log.Println("Shutting down local server...")
-		if err := serverCmd.Process.Kill(); err != nil {
+		if err := server_cmd.Process.Kill(); err != nil {
 			log.Fatalf("Failed to kill server process: %v", err)
 		}
 		log.Println("Server shut down.")
@@ -107,91 +107,91 @@ func main() {
 	log.Println("--- Test Complete ---")
 }
 
-func runClientTest(clientID int, wg *sync.WaitGroup, latChan chan<- LatencyRecord) {
+func run_client_tests(Client_id int, wg *sync.WaitGroup, latChan chan<- LatencyRecord) {
 	defer wg.Done()
 
-	conn, err := net.Dial("tcp", serverAddress)
+	conn, err := net.Dial("tcp", server_address)
 	if err != nil {
-		log.Printf("[Client %d] FAILED to connect: %v", clientID, err)
+		log.Printf("[Client %d] FAILED to connect: %v", Client_id, err)
 		return
 	}
 	defer conn.Close()
 	reader := bufio.NewReader(conn)
 	writer := bufio.NewWriter(conn)
 
-	numOps := rand.Intn(maxOpsPerClient-minOpsPerClient+1) + minOpsPerClient
+	num_ops := rand.Intn(max_ops-min_ops+1) + min_ops
 	successCount := 0
 
-	for i := 0; i < numOps; i++ {
-		key := fmt.Sprintf("key-%d-%d", clientID, i)
-		value := fmt.Sprintf("value-for-client-%d-op-%d", clientID, i)
+	for i := 0; i < num_ops; i++ {
+		key := fmt.Sprintf("key-%d-%d", Client_id, i)
+		value := fmt.Sprintf("value-for-client-%d-op-%d", Client_id, i)
 		flags := rand.Uint32()
 		exptime := 60
 
-		setCmd := fmt.Sprintf("set %s %d %d %d\r\n%s\r\n", key, flags, exptime, len(value), value)
-		startTimeSet := time.Now()
-		_, err := writer.WriteString(setCmd)
+		set_cmd := fmt.Sprintf("set %s %d %d %d\r\n%s\r\n", key, flags, exptime, len(value), value)
+		start_time_set := time.Now()
+		_, err := writer.WriteString(set_cmd)
 		if err == nil {
 			err = writer.Flush()
 		}
 		if err != nil {
-			log.Printf("[Client %d] FAILED on op %d (SET Send): %v", clientID, i, err)
+			log.Printf("[Client %d] FAILED on op %d (SET Send): %v", Client_id, i, err)
 			break
 		}
 
 		response, err := reader.ReadString('\n')
-		latencySet := time.Since(startTimeSet)
+		latency_set := time.Since(start_time_set)
 		if err != nil {
-			log.Printf("[Client %d] FAILED on op %d (SET Recv): %v", clientID, i, err)
+			log.Printf("[Client %d] FAILED on op %d (SET Recv): %v", Client_id, i, err)
 			break
 		}
-		latChan <- LatencyRecord{ClientID: clientID, Operation: "SET", LatencyMs: latencySet.Milliseconds()}
+		latChan <- LatencyRecord{Client_id: Client_id, Operation: "SET", Latency_ms: latency_set.Milliseconds()}
 
 		if strings.TrimSpace(response) != "STORED" {
-			log.Printf("[Client %d] FAILED on op %d: Did not get 'STORED'. Got: %s", clientID, i, response)
+			log.Printf("[Client %d] FAILED on op %d: Did not get 'STORED'. Got: %s", Client_id, i, response)
 			break
 		}
 
-		sleepDuration := time.Duration(rand.ExpFloat64()*avgSleepMillis) * time.Millisecond
-		time.Sleep(sleepDuration)
+		sleep_dur := time.Duration(rand.ExpFloat64()*average_sleep_ms) * time.Millisecond
+		time.Sleep(sleep_dur)
 
-		getCmd := fmt.Sprintf("get %s\r\n", key)
-		startTimeGet := time.Now()
-		_, err = writer.WriteString(getCmd)
+		get_cmd := fmt.Sprintf("get %s\r\n", key)
+		start_time_get := time.Now()
+		_, err = writer.WriteString(get_cmd)
 		if err == nil {
 			err = writer.Flush()
 		}
 		if err != nil {
-			log.Printf("[Client %d] FAILED on op %d (GET Send): %v", clientID, i, err)
+			log.Printf("[Client %d] FAILED on op %d (GET Send): %v", Client_id, i, err)
 			break
 		}
 
-		valueLine, errV := reader.ReadString('\n')
-		dataLine, errD := reader.ReadString('\n')
-		endLine, errE := reader.ReadString('\n')
-		latencyGet := time.Since(startTimeGet)
-		if errV != nil || errD != nil || errE != nil {
-			log.Printf("[Client %d] FAILED on op %d (GET Recv): V: %v, D: %v, E: %v", clientID, i, errV, errD, errE)
+		value_line, err_v := reader.ReadString('\n')
+		data_line, err_d := reader.ReadString('\n')
+		end_line, err_e := reader.ReadString('\n')
+		latency_get := time.Since(start_time_get)
+		if err_v != nil || err_d != nil || err_e != nil {
+			log.Printf("[Client %d] FAILED on op %d (GET Recv): V: %v, D: %v, E: %v", Client_id, i, err_v, err_d, err_e)
 			break
 		}
-		latChan <- LatencyRecord{ClientID: clientID, Operation: "GET", LatencyMs: latencyGet.Milliseconds()}
+		latChan <- LatencyRecord{Client_id: Client_id, Operation: "GET", Latency_ms: latency_get.Milliseconds()}
 
-		expectedValueLine := fmt.Sprintf("VALUE %s %d %d", key, flags, len(value))
-		if !strings.HasPrefix(valueLine, expectedValueLine) || strings.TrimSpace(dataLine) != value || strings.TrimSpace(endLine) != "END" {
-			log.Printf("[Client %d] FAILED on op %d: GET response was not correct.", clientID, i)
+		expectedvalue_line := fmt.Sprintf("VALUE %s %d %d", key, flags, len(value))
+		if !strings.HasPrefix(value_line, expectedvalue_line) || strings.TrimSpace(data_line) != value || strings.TrimSpace(end_line) != "END" {
+			log.Printf("[Client %d] FAILED on op %d: GET response was not correct.", Client_id, i)
 			break
 		}
 		successCount++
 	}
 
-	if successCount == numOps {
-		log.Printf("[Client %d] SUCCESS: Completed all %d Set/Get operations.", clientID, numOps)
+	if successCount == num_ops {
+		log.Printf("[Client %d] SUCCESS: Completed all %d Set/Get operations.", Client_id, num_ops)
 	} else {
-		log.Printf("[Client %d] FAILED: Completed only %d of %d operations.", clientID, successCount, numOps)
+		log.Printf("[Client %d] FAILED: Completed only %d of %d operations.", Client_id, successCount, num_ops)
 	}
 }
 
-func saveLatenciesToCSV(records []LatencyRecord, filename string) {
+func save_latency_to_csv(records []LatencyRecord, filename string) {
 	file, err := os.Create(filename)
 	if err != nil {
 		log.Printf("ERROR creating CSV file %s: %v", filename, err)
@@ -202,13 +202,13 @@ func saveLatenciesToCSV(records []LatencyRecord, filename string) {
 	writer := csv.NewWriter(file)
 	defer writer.Flush()
 
-	writer.Write([]string{"ClientID", "Operation", "LatencyMs"})
+	writer.Write([]string{"Client_id", "Operation", "Latency_ms"})
 
 	for _, record := range records {
 		row := []string{
-			strconv.Itoa(record.ClientID),
+			strconv.Itoa(record.Client_id),
 			record.Operation,
-			strconv.FormatInt(record.LatencyMs, 10),
+			strconv.FormatInt(record.Latency_ms, 10),
 		}
 		writer.Write(row)
 	}

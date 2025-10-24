@@ -11,10 +11,10 @@ import (
 	"strings"
 )
 
-const serverAddress = "localhost:8080"
+const server_address = "localhost:8080"
 
 func main() {
-	conn, err := net.Dial("tcp", serverAddress)
+	conn, err := net.Dial("tcp", server_address)
 	if err != nil {
 		log.Fatalf("Failed to connect to server: %v", err)
 	}
@@ -53,8 +53,8 @@ func main() {
 			}
 
 			value := strings.Join(parts[4:], " ")
-			memcacheCommand := fmt.Sprintf("set %s %d %d %d\r\n%s\r\n", key, flags, exptime, len(value), value)
-			io.WriteString(conn, memcacheCommand)
+			memcache_command := fmt.Sprintf("set %s %d %d %d\r\n%s\r\n", key, flags, exptime, len(value), value)
+			io.WriteString(conn, memcache_command)
 		case "get", "delete":
 			if len(parts) != 2 {
 				fmt.Printf("ERROR: %s requires a key.\n", strings.ToUpper(command))
@@ -90,12 +90,9 @@ func readServerResponses(conn net.Conn) {
 		}
 
 		fmt.Print(response)
-		// Special handling for multi-line GET response
 		if strings.HasPrefix(response, "VALUE") {
-			// read value line
 			value, _ := reader.ReadString('\n')
 			fmt.Print(value)
-			// read END line
 			end, _ := reader.ReadString('\n')
 			fmt.Print(end)
 		}
