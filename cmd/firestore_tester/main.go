@@ -16,12 +16,15 @@ const (
 	minOpsPerClient = 50
 	maxOpsPerClient = 100
 	kindName        = "kvstore_test_entry"
+	// THIS IS THE NEW, CRITICAL LINE
+	databaseID = "kvstore-assignment"
 )
 
 // DatastoreEntity is the struct we will save.
 type DatastoreEntity struct {
 	Value string `datastore:"value"`
-	Flags uint32 `datastore:"flags"`
+	// CHANGED: Datastore doesn't support uint32, so we use int64
+	Flags int64 `datastore:"flags"`
 }
 
 func main() {
@@ -29,13 +32,14 @@ func main() {
 
 	ctx := context.Background()
 
-	client, err := datastore.NewClient(ctx, datastore.DetectProjectID)
+	// Use the Datastore client, AND specify the databaseID
+	client, err := datastore.NewClientWithDatabase(ctx, datastore.DetectProjectID, databaseID)
 	if err != nil {
 		log.Fatalf("Failed to create Datastore client: %v", err)
 	}
 	defer client.Close()
 
-	log.Printf("Successfully connected to Datastore.")
+	log.Printf("Successfully connected to Datastore (Database: %s).", databaseID)
 
 	var wg sync.WaitGroup
 	startTime := time.Now()
@@ -69,12 +73,12 @@ func runClientTest(ctx context.Context, client *datastore.Client, clientID int, 
 
 	for i := 0; i < numOps; i++ {
 		keyName := fmt.Sprintf("key-%d-%d", clientID, i)
-		// Datastore uses "Keys" which have a Kind (like a collection) and a Name (like a doc ID)
 		key := datastore.NameKey(kindName, keyName, nil)
 
 		entity := &DatastoreEntity{
 			Value: fmt.Sprintf("value-for-client-%d-op-%d", clientID, i),
-			Flags: rand.Uint32(),
+			// CHANGED: Use rand.Int63() to generate an int64
+			Flags: rand.Int63(),
 		}
 
 		// 1. SET the value (using "Put")
@@ -111,6 +115,7 @@ func deleteKind(ctx context.Context, client *datastore.Client, kind string) erro
 		}
 
 		if len(keys) == 0 {
+			// Nothing left to delete
 			return nil
 		}
 
