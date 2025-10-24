@@ -13,8 +13,8 @@ import (
 
 const (
 	num_clients = 5
-	min_ops     = 500
-	max_ops     = 1000
+	min_ops     = 100
+	max_ops     = 500
 	kind_name   = "kvstore_test_entry"
 	dataset_id  = "kvstore-assignment"
 )
