@@ -8,34 +8,34 @@ import (
 	"sync"
 	"time"
 
-	"cloud.google.com/go/firestore"
-	"google.golang.org/api/iterator"
-	"google.golang.org/api/option"
+	"cloud.google.com/go/datastore"
 )
 
 const (
 	numClients      = 5
 	minOpsPerClient = 50
 	maxOpsPerClient = 100
-	collectionName  = "kvstore_test"
-	databaseID      = "kvstore-assignment"
+	kindName        = "kvstore_test_entry"
 )
 
-var projectID string
+// DatastoreEntity is the struct we will save.
+type DatastoreEntity struct {
+	Value string `datastore:"value"`
+	Flags uint32 `datastore:"flags"`
+}
 
 func main() {
-	log.Println("--- Firestore Performance Test ---")
+	log.Println("--- Datastore Performance Test ---")
 
 	ctx := context.Background()
 
-	// THIS LINE IS UPDATED to use the new databaseID
-	client, err := firestore.NewClientWithDatabase(ctx, firestore.DetectProjectID, databaseID, option.WithCredentialsFile(""))
+	client, err := datastore.NewClient(ctx, datastore.DetectProjectID)
 	if err != nil {
-		log.Fatalf("Failed to create Firestore client for database '%s': %v", databaseID, err)
+		log.Fatalf("Failed to create Datastore client: %v", err)
 	}
 	defer client.Close()
 
-	log.Printf("Successfully connected to Firestore (Database: %s).", databaseID)
+	log.Printf("Successfully connected to Datastore.")
 
 	var wg sync.WaitGroup
 	startTime := time.Now()
@@ -55,38 +55,38 @@ func main() {
 	log.Printf("Total time for all operations: %v", duration)
 
 	log.Println("Cleaning up test data...")
-	if err := deleteCollection(ctx, client, collectionName, 100); err != nil {
-		log.Printf("Failed to clean up collection: %v", err)
+	if err := deleteKind(ctx, client, kindName); err != nil {
+		log.Printf("Failed to clean up kind: %v", err)
 	}
 	log.Println("Cleanup complete.")
 }
 
-func runClientTest(ctx context.Context, client *firestore.Client, clientID int, wg *sync.WaitGroup) {
+func runClientTest(ctx context.Context, client *datastore.Client, clientID int, wg *sync.WaitGroup) {
 	defer wg.Done()
 
 	numOps := rand.Intn(maxOpsPerClient-minOpsPerClient+1) + minOpsPerClient
 	successCount := 0
 
 	for i := 0; i < numOps; i++ {
-		key := fmt.Sprintf("key-%d-%d", clientID, i)
-		value := fmt.Sprintf("value-for-client-%d-op-%d", clientID, i)
+		keyName := fmt.Sprintf("key-%d-%d", clientID, i)
+		// Datastore uses "Keys" which have a Kind (like a collection) and a Name (like a doc ID)
+		key := datastore.NameKey(kindName, keyName, nil)
 
-		_, err := client.Collection(collectionName).Doc(key).Set(ctx, map[string]interface{}{
-			"value": value,
-			"flags": rand.Uint32(),
-		})
-		if err != nil {
+		entity := &DatastoreEntity{
+			Value: fmt.Sprintf("value-for-client-%d-op-%d", clientID, i),
+			Flags: rand.Uint32(),
+		}
+
+		// 1. SET the value (using "Put")
+		if _, err := client.Put(ctx, key, entity); err != nil {
 			log.Printf("[Client %d] FAILED on SET: %v", clientID, err)
 			break
 		}
 
-		doc, err := client.Collection(collectionName).Doc(key).Get(ctx)
-		if err != nil {
+		// 2. GET the value
+		var retrievedEntity DatastoreEntity
+		if err := client.Get(ctx, key, &retrievedEntity); err != nil {
 			log.Printf("[Client %d] FAILED on GET: %v", clientID, err)
-			break
-		}
-		if !doc.Exists() {
-			log.Printf("[Client %d] FAILED on GET: Doc does not exist", clientID)
 			break
 		}
 
@@ -100,32 +100,23 @@ func runClientTest(ctx context.Context, client *firestore.Client, clientID int, 
 	}
 }
 
-func deleteCollection(ctx context.Context, client *firestore.Client, collPath string, batchSize int) error {
-	coll := client.Collection(collPath)
+// deleteKind is the Datastore way of "deleting a collection"
+func deleteKind(ctx context.Context, client *datastore.Client, kind string) error {
+	log.Println("Deleting all entities of kind 'kvstore_test_entry'...")
 	for {
-		iter := coll.Limit(batchSize).Documents(ctx)
-		numDeleted := 0
-
-		batch := client.Batch()
-		for {
-			doc, err := iter.Next()
-			if err == iterator.Done {
-				break
-			}
-			if err != nil {
-				return err
-			}
-			batch.Delete(doc.Ref)
-			numDeleted++
+		q := datastore.NewQuery(kind).KeysOnly().Limit(500)
+		keys, err := client.GetAll(ctx, q, nil)
+		if err != nil {
+			return err
 		}
 
-		if numDeleted == 0 {
+		if len(keys) == 0 {
 			return nil
 		}
 
-		if _, err := batch.Commit(ctx); err != nil {
+		if err := client.DeleteMulti(ctx, keys); err != nil {
 			return err
 		}
-		log.Printf("Deleted %d documents from %s", numDeleted, collPath)
+		log.Printf("Deleted %d entities", len(keys))
 	}
 }
