@@ -24,8 +24,8 @@ const (
 	num_clients      = 5
 	server_path      = "./cmd/server"
 	average_sleep_ms = 100
-	min_ops          = 500
-	max_ops          = 1000
+	min_ops          = 100
+	max_ops          = 500
 )
 
 type LatencyRecord struct {
