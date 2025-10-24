@@ -18,6 +18,7 @@ const (
 	minOpsPerClient = 50
 	maxOpsPerClient = 100
 	collectionName  = "kvstore_test"
+	databaseID      = "kvstore-assignment"
 )
 
 var projectID string
@@ -27,13 +28,14 @@ func main() {
 
 	ctx := context.Background()
 
-	client, err := firestore.NewClient(ctx, firestore.DetectProjectID, option.WithCredentialsFile(""))
+	// THIS LINE IS UPDATED to use the new databaseID
+	client, err := firestore.NewClientWithDatabase(ctx, firestore.DetectProjectID, databaseID, option.WithCredentialsFile(""))
 	if err != nil {
-		log.Fatalf("Failed to create Firestore client: %v", err)
+		log.Fatalf("Failed to create Firestore client for database '%s': %v", databaseID, err)
 	}
 	defer client.Close()
 
-	log.Printf("Successfully connected to Firestore.")
+	log.Printf("Successfully connected to Firestore (Database: %s).", databaseID)
 
 	var wg sync.WaitGroup
 	startTime := time.Now()
